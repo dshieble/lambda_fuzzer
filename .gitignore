@@ -1,0 +1,10 @@
+env/
+*.egg-info
+__pycache__
+cruft
+.env
+terraform.tfvars
+.terraform*
+terraform.tfstate*
+.vscode
+cmd
