@@ -6,7 +6,6 @@ LambdaFuzzer is a security research and QA tool for fuzzing urls at scale. This 
 LambdaFuzzer initializes a collection of lambda functions, repeatedly generates lists of candidate urls, and sends the candidate urls to the lambda functions to try. Running the url connections from the lambda functions has a number of benefits:
 - Network throughput scales with the number of lambda functions deployed
 - Lambda functions rotate IP addresses, which can improve privacy
-- Decreased security risk from hitting a malicious url
 
 
 
