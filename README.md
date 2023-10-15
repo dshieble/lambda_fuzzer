@@ -1,23 +1,37 @@
 # AWS Lambda Proxy-Based Subdomain Fuzzer
 
 ## Background
-This is a tool to fuzz url parameters at scale. The tool uses a collection of AWS lambda functions as proxies to send get requests to a target url with a range of user-specified parameters. 
+LambdaFuzzer is a security research and QA tool for fuzzing urls at scale. This tool is capable of testing millions of urls an hour.
+
+This tool initializes a collection of lambda functions, repeatedly generates lists of candidate urls, and sends the candidate urls to the lambda functions to try. Running the url connections from the lambda functions has a number of benefits
+- Network throughput scales with the number of lambda functions deployed
+- Lambda functions rotate IP addresses, which can improve privacy
+- Decreased security risk from hitting a malicious url
+
+
 
 ## Setup Proxies
 First, run `pip install requirements.txt`. Next, we will instantiate the proxies for fuzzing. You can set the number of proxies in lambda_fuzzer/variables.tf
 
 ### Configure AWS
+```
 aws configure --profile danshiebler # start by creating a profile, which gets written to ~/.aws/config 
+```
 
 ### init terraform
+```
 cd lambda_scraper
 terraform init
+```
 
 ### To tear down and rebuild
+```
 terraform apply -destroy -auto-approve
 terraform apply -auto-approve
+```
 
 ## Run the tool
+Run the following command to test every parameter in `path_to_fuzz_terms_file` against `url_template` and write the urls that resolve without errors to `s3_bucket_name`.
 ```
  python run_fuzzer.py \
     --path_to_fuzz_terms_file=<path to the text file of fuzzing terms> \
