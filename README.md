@@ -1,4 +1,4 @@
-# AWS Lambda Proxy-Based Subdomain Fuzzer
+# LambdaFuzzer
 
 ## Background
 LambdaFuzzer is a security research and QA tool for fuzzing urls at scale. This tool is capable of testing millions of urls an hour.
