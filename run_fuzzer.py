@@ -10,6 +10,7 @@ import aioboto3
 from dataclasses import dataclass 
 
 from lambda_fuzzer.proxy_manager import ProxyManager
+from lambda_fuzzer.s3_utils import AsyncS3Client
 
 # We add urls that have already been looked at to this bloom filter to avoid reprocessing them
 BLOOM_FILTER_SIZE = 10000000000
@@ -30,62 +31,59 @@ def load_bloom_filter(bloom_filter_path: Optional[str]) -> pybloomfilter.BloomFi
 
 @dataclass
 class UrlWriter:
-  s3_bucket_name: str
-  s3_directory_key: str
   bloom_filter: pybloomfilter.BloomFilter
-  session: aioboto3.Session
+  async_s3_client: AsyncS3Client
 
   @classmethod
   async def create_url_writer(
     cls,
-    s3_bucket_name: str,
-    s3_directory_key: str,
     aws_profile_name: str,
     bloom_filter_path: str,
     aws_region_name: str
   ):
     os.environ['AWS_DEFAULT_REGION'] = aws_region_name
-    session = aioboto3.Session(
-      region_name=aws_region_name,
-      profile_name=aws_profile_name
-    )
+    async_s3_client = AsyncS3Client(aws_profile_name=aws_profile_name, aws_region_name=aws_region_name)
     
-    async with session.client('s3') as s3_client:
-      # Check whether the bucket exists and create it if it does not
-      try:
-        await s3_client.head_bucket(Bucket=s3_bucket_name)
-      except Exception as e:
-        logging.error(f"S3 Bucket {s3_bucket_name} not found! Creating the bucket.")
-        await s3_client.create_bucket(Bucket=s3_bucket_name)
     return cls(
-      s3_bucket_name=s3_bucket_name,
-      s3_directory_key=s3_directory_key,
       bloom_filter=load_bloom_filter(bloom_filter_path=bloom_filter_path),
-      session=session
+      async_s3_client=async_s3_client,
     )
-
-  async def write_url_list_to_s3(self, url_list: List[str]):
-    if len(url_list) > 0:
-      url_list_string = "\n".join(url_list) + "\n"
-      key = os.path.join(self.s3_directory_key, str(uuid.uuid4()))
-      async with self.session.client('s3') as s3_client:
-        await s3_client.put_object(Body=url_list_string, Bucket=self.s3_bucket_name, Key=key)
-
 
   def write_url_list_to_bloom(self, url_list: List[str]):
     for url in url_list:
       self.bloom_filter.update((url,))
 
-  def get_filtered_urls(self, url_list: List[str]) -> List[str]:
-    return [url for url in url_list if url not in self.bloom_filter]
+  def get_filtered_urls(self, url_list: List[str], s3_path: Optional[str] = None) -> List[str]:
+    """
+    Get all urls that weren't already written to s3 or the bloom filter
+    """
+    processed_url_set = set(
+      self.async_s3_client.load_files_from_s3(s3_path=s3_path))  if s3_path is not None else set()
+    logging.info(f"Loaded {len(processed_url_set)} already processed urls from s3")
+    return [url for url in url_list if url not in self.bloom_filter and url not in processed_url_set]
 
+  async def write_url_list_to_s3(self, url_list: List[str], s3_path: str):
+    await self.async_s3_client.write_string_list_to_s3(string_list=url_list, s3_directory_path=s3_path)
 
-  async def get_urls_to_scan_from_fuzz_terms_file(self, path_to_fuzz_terms_file: str) -> List[str]:
+  async def get_urls_to_scan_from_fuzz_terms_file(
+    self,
+    url_template: str,
+    path_to_fuzz_terms_file: str,
+    s3_path: Optional[str] = None,
+  ) -> List[str]:
+    """
+    Args:
+      url_template: The url template to inject fuzz terms into
+      path_to_fuzz_terms_file: The path to the file containing the fuzz terms to use
+      s3_path: The path to the urls that have already been written
+    Returns:
+      url_list: The list of urls to scan
+    """
     with open(path_to_fuzz_terms_file, 'r') as f:
       fuzz_term_list = f.readlines()
-    full_url_list = [args.url_template % fuzz_term.strip() for fuzz_term in fuzz_term_list]
+    full_url_list = [url_template % fuzz_term.strip() for fuzz_term in fuzz_term_list]
     
-    url_list = self.get_filtered_urls(url_list=full_url_list)
+    url_list = self.get_filtered_urls(url_list=full_url_list, s3_path=s3_path)
     print(f"Fuzzing {len(url_list)} urls out of {len(full_url_list)} total urls.")
     
     example_urls = '\n'.join(url_list[:10])
@@ -98,7 +96,8 @@ async def execute_proxy_discovery_on_url_list(
   url_list: List[str],
   proxy_manager: ProxyManager,
   proxy_number: int,
-  url_writer: UrlWriter
+  url_writer: UrlWriter,
+  s3_path: str
 ):
   # We use a random sleep here to avoid all of the proxies being called at the same time
   await asyncio.sleep(10 * float(np.random.random()))
@@ -127,7 +126,7 @@ async def execute_proxy_discovery_on_url_list(
       ]
 
       logging.info(f"Writing {len(success_code_urls)} success code urls to s3 and {len(url_list)} total urls to bloom filter")
-      await url_writer.write_url_list_to_s3(url_list=success_code_urls)
+      await url_writer.write_url_list_to_s3(url_list=success_code_urls, s3_path=s3_path)
       url_writer.write_url_list_to_bloom(url_list=url_list)
 
 
@@ -135,60 +134,58 @@ async def execute_proxy_discovery_on_url_list(
 async def main(args):
 
   url_writer = await UrlWriter.create_url_writer(
-    s3_bucket_name=args.s3_bucket_name,
-    s3_directory_key=args.s3_directory_key,
     aws_profile_name=args.aws_profile_name,
     aws_region_name=args.aws_region_name,
     bloom_filter_path=args.bloom_filter_path)
 
-  full_url_list = await url_writer.get_urls_to_scan_from_fuzz_terms_file(path_to_fuzz_terms_file=args.path_to_fuzz_terms_file)
+  url_template_list = args.url_template_list.split(',')
+  s3_path_list = args.s3_path_list.split(',')
+  if len(url_template_list) != len(s3_path_list):
+    raise ValueError(f"Length of url_template_list: {len(url_template_list)} must equal length of s3_directory_key_list: {len(s3_path_list)}")
 
-  # Split the url_list into chunks, each of which will be passed to a single proxy at a time
-  chunked_url_list = []
-  for i in range(0, len(full_url_list), args.number_urls_to_process_per_proxy_call):
-    chunked_url_list.append(full_url_list[i:i+args.number_urls_to_process_per_proxy_call])
+  for url_template, s3_path in zip(url_template_list, s3_path_list):
+    logging.info(f"Processing url template: {url_template} and writing to s3_path: {s3_path}")
+    full_url_list = await url_writer.get_urls_to_scan_from_fuzz_terms_file(
+      url_template=url_template, path_to_fuzz_terms_file=args.path_to_fuzz_terms_file)
+    logging.info(f"Loaded {len(full_url_list)} urls to process")
 
-  # Iterate through groups of num_proxies chunks at a time
-  num_proxies = int(args.max_proxy) - int(args.min_proxy)
-  for i in range(0, len(chunked_url_list), num_proxies):
-    print(f"PROCESSING CHUNK: {i}:{min(len(chunked_url_list), i+num_proxies)} out of {len(chunked_url_list)}")
-    proxy_manager = ProxyManager(aws_profile_name=args.aws_profile_name)
+    # Split the url_list into chunks, each of which will be passed to a single proxy at a time
+    chunked_url_list = []
+    for i in range(0, len(full_url_list), args.number_urls_to_process_per_proxy_call):
+      chunked_url_list.append(full_url_list[i:i+args.number_urls_to_process_per_proxy_call])
 
-    await asyncio.gather(*[
-      execute_proxy_discovery_on_url_list(
-        url_list=url_list,
-        proxy_manager=proxy_manager,
-        proxy_number=proxy_number,
-        url_writer=url_writer
-      )
-      for proxy_number, url_list in zip(range(int(args.min_proxy), int(args.max_proxy)), chunked_url_list[i:i+num_proxies])
-    ])
+    # Iterate through groups of num_proxies chunks at a time
+    num_proxies = int(args.max_proxy) - int(args.min_proxy)
+    for i in range(0, len(chunked_url_list), num_proxies):
+      print(f"PROCESSING CHUNK: {i}:{min(len(chunked_url_list), i+num_proxies)} out of {len(chunked_url_list)}")
+      proxy_manager = ProxyManager(aws_profile_name=args.aws_profile_name)
+
+      await asyncio.gather(*[
+        execute_proxy_discovery_on_url_list(
+          url_list=url_list,
+          proxy_manager=proxy_manager,
+          proxy_number=proxy_number,
+          url_writer=url_writer,
+          s3_path=s3_path
+        )
+        for proxy_number, url_list in zip(range(int(args.min_proxy), int(args.max_proxy)), chunked_url_list[i:i+num_proxies])
+      ])
 
 
 if __name__ == "__main__":
-  """
-
-  python run_fuzzer.py \
-    --path_to_fuzz_terms_file=<path to the text file of fuzzing terms> \
-    --aws_profile_name=<the name of the aws profile to use> \
-    --url_template=<the template of the url to use, with `%s` in place of the term to fuzz> \
-    --s3_bucket_name=<the bucket on s3 to write the text files of urls that returned 200 codes> 
-    --s3_directory_key=<the key within the s3 bucket to write to> 
-
-  """
   parser = argparse.ArgumentParser()
-  parser.add_argument("--url_template", type=str, required=True) 
-  parser.add_argument("--path_to_fuzz_terms_file", type=str, required=True)
-  parser.add_argument("--s3_bucket_name", type=str, required=True)
-  parser.add_argument("--s3_directory_key", type=str, required=True)
+  parser.add_argument("--path_to_fuzz_terms_file", type=str, required=True, description="the path to the file containing the fuzz terms to use")
+  parser.add_argument("--s3_path_list", type=str, required=True, description="the list of paths to the directories on s3 where the files containing discovered urls will be written")
+  parser.add_argument("--url_template_list", type=str, required=True, description="the comma-separated list of url templates to use, with `%s` in place of the term to fuzz. Must be the same length as s3_directory_key_list")
 
-  parser.add_argument("--aws_profile_name", type=str, required=True)
 
-  parser.add_argument("--bloom_filter_path", type=str, default=None) 
-  parser.add_argument("--number_urls_to_process_per_proxy_call", type=int, default=100)
-  parser.add_argument("--aws_region_name", type=str, default="us-east-1")
-  parser.add_argument("--min_proxy", type=int, default=0)
-  parser.add_argument("--max_proxy", type=int, default=10)
+  parser.add_argument("--bloom_filter_path", type=str, default=None, description="the path to the bloom filter to use. If not provided, a new one will be created")
+  parser.add_argument("--number_urls_to_process_per_proxy_call", type=int, default=100, description="the number of urls to process within each call to a lambda proxy")
+
+  parser.add_argument("--aws_profile_name", type=str, required=True, description="the name of the aws profile to use")
+  parser.add_argument("--aws_region_name", type=str, default="us-east-1", description="the name of the aws region to use")
+  parser.add_argument("--min_proxy", type=int, default=0, description="the minimum proxy number to use")
+  parser.add_argument("--max_proxy", type=int, default=10, description="the maximum proxy number to use")
 
   args = parser.parse_args()
 

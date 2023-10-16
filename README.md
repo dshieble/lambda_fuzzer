@@ -37,9 +37,9 @@ terraform apply -auto-approve
 Run the following command to test every parameter in `path_to_fuzz_terms_file` against `url_template` and write the urls that resolve without errors to `s3_bucket_name`.
 ```
  python run_fuzzer.py \
+    --url_template_list=https://%s.github.io,https://%s.pages.dev \
+    --s3_path_list=s3://bucket-name/github,s3://bucket-name/gpages \
     --path_to_fuzz_terms_file=<path to the text file of fuzzing terms> \
     --aws_profile_name=<the name of the aws profile to use> \
-    --url_template=<the template of the url to use, with `%s` in place of the term to fuzz> \
-    --s3_bucket_name=<the bucket on s3 to write the text files of urls that returned 200 codes> 
     --s3_directory_key=<the key within the s3 bucket to write to> 
 ```
