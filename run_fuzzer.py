@@ -65,12 +65,11 @@ class UrlWriter:
     )
 
   async def write_url_list_to_s3(self, url_list: List[str]):
-    url_list_string = "" if len(url_list) == 0 else "\n".join(url_list) + "\n"
-    key = os.path.join(self.s3_directory_key, str(uuid.uuid4()))
-    async with self.session.client('s3') as s3_client:
-      await s3_client.put_object(Body=url_list_string, Bucket=self.s3_bucket_name, Key=key)
-    # aws s3 mkdir active_site_fuzz_terms --profile=danshiebler
-
+    if len(url_list) > 0:
+      url_list_string = "\n".join(url_list) + "\n"
+      key = os.path.join(self.s3_directory_key, str(uuid.uuid4()))
+      async with self.session.client('s3') as s3_client:
+        await s3_client.put_object(Body=url_list_string, Bucket=self.s3_bucket_name, Key=key)
 
 
   def write_url_list_to_bloom(self, url_list: List[str]):
@@ -105,27 +104,31 @@ async def execute_proxy_discovery_on_url_list(
   await asyncio.sleep(10 * float(np.random.random()))
 
   # First we check which urls are active using an AWS lambda proxy
-  response = await proxy_manager.run_lambda_proxy(url_list=url_list, proxy_number=proxy_number)
-
-  if "urlList" not in response:
-    # TODO: Add retry logic
-    logging.error(
-      f"""
-      FAILED TO GET RESPONSE FROM LAMBDA PROXY {proxy_number}
-      response: {response}
-      url_list: {url_list}
-      """)
+  try:
+    response = await proxy_manager.run_lambda_proxy(url_list=url_list, proxy_number=proxy_number)
+  except Exception as e:
+    print(f"ERROR on proxy number: {proxy_number}")
+    print(e)
   else:
-    assert len(set(response["errorUrlList"]).intersection(set(response["urlList"]))) == 0
-    # Next we check the status codes and add urls with non-success status codes to the bloom filter
-    success_code_urls = [
-      url for url, status_code in zip(response["urlList"], response["statusCodeList"])
-      if str(status_code).startswith('2')
-    ]
+    if "urlList" not in response:
+      # TODO: Add retry logic
+      logging.error(
+        f"""
+        FAILED TO GET RESPONSE FROM LAMBDA PROXY {proxy_number}
+        response: {response}
+        url_list: {url_list}
+        """)
+    else:
+      assert len(set(response["errorUrlList"]).intersection(set(response["urlList"]))) == 0
+      # Next we check the status codes and add urls with non-success status codes to the bloom filter
+      success_code_urls = [
+        url for url, status_code in zip(response["urlList"], response["statusCodeList"])
+        if str(status_code).startswith('2')
+      ]
 
-    logging.info(f"Writing {len(success_code_urls)} success code urls to s3 and {len(url_list)} total urls to bloom filter")
-    await url_writer.write_url_list_to_s3(url_list=success_code_urls)
-    url_writer.write_url_list_to_bloom(url_list=url_list)
+      logging.info(f"Writing {len(success_code_urls)} success code urls to s3 and {len(url_list)} total urls to bloom filter")
+      await url_writer.write_url_list_to_s3(url_list=success_code_urls)
+      url_writer.write_url_list_to_bloom(url_list=url_list)
 
 
 
@@ -182,7 +185,7 @@ if __name__ == "__main__":
   parser.add_argument("--aws_profile_name", type=str, required=True)
 
   parser.add_argument("--bloom_filter_path", type=str, default=None) 
-  parser.add_argument("--number_urls_to_process_per_proxy_call", type=int, default=1000)
+  parser.add_argument("--number_urls_to_process_per_proxy_call", type=int, default=100)
   parser.add_argument("--aws_region_name", type=str, default="us-east-1")
   parser.add_argument("--min_proxy", type=int, default=0)
   parser.add_argument("--max_proxy", type=int, default=10)

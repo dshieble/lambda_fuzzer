@@ -10,7 +10,7 @@ from base64 import b64decode
 import os
 from typing import Any, Dict, List
 
-import aioboto3
+import aioboto3, botocore
 
 HEADERS = {
   "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
@@ -34,14 +34,18 @@ class ProxyManager:
     self.session = aioboto3.Session(
       region_name='us-east-1',
       profile_name=aws_profile_name
+      
     )
     os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
     self.round_robin = 0
 
 
   async def run_lambda_proxy(self, url_list: List[str], proxy_number: int) -> Dict[str, Any]:
-
-    async with self.session.client("lambda") as lambda_client:
+    config = botocore.config.Config(connect_timeout=600, read_timeout=600)
+    async with self.session.client(
+      "lambda",
+      config=config
+    ) as lambda_client:
       raw_result = await lambda_client.invoke(
         FunctionName=f"proxy-{proxy_number}",
         InvocationType="RequestResponse",

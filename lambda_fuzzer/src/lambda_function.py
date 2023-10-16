@@ -1,22 +1,14 @@
-"""
-Deploy with the following from the lambda_scraper directory
-  terraform apply -destroy -auto-approve; terraform apply -auto-approve
-"""
-
 import asyncio
 from base64 import b64encode
 from typing import Any, Dict
-
 
 import httpx
 
 
 async def safe_get(url: str, httpx_client: httpx.AsyncClient, headers: Dict[str, Any]) -> Dict[str, Any]:
-  # TODO: maybe edit this to first ping the url. This may help things go faster (or not)
   result = {"url": url}
   try:
     result["response"] = await httpx_client.get(
-      # event.get('method', "GET"),
       url,
       follow_redirects=True,
       headers=headers)
@@ -26,7 +18,6 @@ async def safe_get(url: str, httpx_client: httpx.AsyncClient, headers: Dict[str,
 
 
 async def async_get_lambda_handler(event, context):
-  # TODO: add a filter here based on DNS lookups
 
   async with httpx.AsyncClient(verify=False) as httpx_client:
     response_list = await asyncio.gather(*[safe_get(
@@ -57,20 +48,3 @@ async def async_get_lambda_handler(event, context):
 def lambda_handler(event, context):
   loop = asyncio.get_event_loop()    
   return loop.run_until_complete(async_get_lambda_handler(event, context))  
-
-
-# from requests_html import HTMLSession
-# def lambda_handler(event, context):
-#     session = HTMLSession()
-#     response = session.request(method=event.get('method', 'GET'),
-#                                url=event['url'],
-#                                headers=event.get('headers', None),
-#                                data=event.get('data', None),
-#                                json=event.get('json', None),
-#                                stream=True)
-#     return {
-#         'headers': dict(response.headers),
-#         'statusCode': response.status_code,
-#         'body': b64encode(response.raw.read(decode_content=True)),
-#         'isBase64Encoded': True
-#     }
