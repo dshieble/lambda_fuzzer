@@ -50,7 +50,7 @@ class AsyncS3Client:
       s3_bucket_name = url_parts.netloc
       key = os.path.join(url_parts.path.lstrip('/'), str(uuid.uuid4()))
 
-      self.create_bucket_if_not_exists(s3_bucket_name=s3_bucket_name)
+      await self.create_bucket_if_not_exists(s3_bucket_name=s3_bucket_name)
       url_list_string = "\n".join(string_list) + "\n"
       async with self.session.client('s3') as s3_client:
         await s3_client.put_object(Body=url_list_string, Bucket=s3_bucket_name, Key=key)
