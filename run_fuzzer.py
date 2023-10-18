@@ -170,6 +170,9 @@ async def main(args):
         for proxy_number, url_list in zip(range(int(args.min_proxy), int(args.max_proxy)), chunked_url_list[i:i+num_proxies])
       ])
 
+      # Flush the buffer to s3
+      url_writer.async_s3_client.write_buffer_to_s3(s3_directory_path=s3_path)
+
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()

@@ -1,10 +1,3 @@
-"""
-First run aws configure --profile danshiebler to set up the AWS credentials
-Then run python test_scraper.py
-
-
-Last resort - run in executor (use threading) - https://stackoverflow.com/questions/68558054/using-boto3-to-await-a-synchronous-lambda-invocation
-"""
 import json
 from base64 import b64decode
 import os
