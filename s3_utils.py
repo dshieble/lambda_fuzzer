@@ -10,7 +10,6 @@ from tqdm import tqdm
 class AsyncS3Client:
 
   def __init__(self, aws_region_name: str, aws_profile_name: str, buffer_length: int = 1000):
-    os.environ['AWS_DEFAULT_REGION'] = aws_region_name
     self.session = aioboto3.Session(
       region_name=aws_region_name,
       profile_name=aws_profile_name
@@ -51,17 +50,16 @@ class AsyncS3Client:
     s3_bucket_name = url_parts.netloc
     key = os.path.join(url_parts.path.lstrip('/'), str(uuid.uuid4()))
 
+    body = "\n".join(self.s3_buffer[s3_directory_path]) + "\n"
     async with self.session.client('s3') as s3_client:
-      await s3_client.put_object(Body=string_list, Bucket=s3_bucket_name, Key=key)
-    self.s3_buffer[s3_directory_path] = []
+      await s3_client.put_object(Body=body, Bucket=s3_bucket_name, Key=key)
 
   async def write_buffer_to_s3(self, s3_directory_path: str):
     """
     Write the contents of the buffer to s3 for the given s3_directory_path
     """
 
-    string_list = "\n".join(self.s3_buffer[s3_directory_path]) + "\n"
-    await self.write_string_list_to_s3(string_list=string_list, s3_directory_path=s3_directory_path)
+    await self.write_string_list_to_s3(string_list=self.s3_buffer[s3_directory_path], s3_directory_path=s3_directory_path)
     self.s3_buffer[s3_directory_path] = []
 
   async def write_string_list_to_s3_buffer(self, string_list: List[str], s3_directory_path: str):
@@ -69,6 +67,8 @@ class AsyncS3Client:
     Given a list of strings, write them to the s3 buffer. Trigger a flush to s3 if the length is greater than the buffer length. We use this to avoid writing to s3 too often.
     """
     if len(string_list) > 0:
+      if s3_directory_path not in self.s3_buffer:
+        self.s3_buffer[s3_directory_path] = []
       self.s3_buffer[s3_directory_path] += string_list
       if len(self.s3_buffer[s3_directory_path]) >= self.buffer_length:
         await self.write_buffer_to_s3(s3_directory_path=s3_directory_path)

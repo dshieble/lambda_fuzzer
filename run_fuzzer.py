@@ -62,7 +62,7 @@ class UrlWriter:
     return [url for url in url_list if url not in self.bloom_filter and url not in processed_url_set]
 
   async def write_url_list_to_s3(self, url_list: List[str], s3_path: str):
-    await self.async_s3_client.write_string_list_to_s3(string_list=url_list, s3_directory_path=s3_path)
+    await self.async_s3_client.write_string_list_to_s3_buffer(string_list=url_list, s3_directory_path=s3_path)
 
   async def get_urls_to_scan_from_fuzz_terms_file(
     self,
@@ -171,7 +171,7 @@ async def main(args):
       ])
 
       # Flush the buffer to s3
-      url_writer.async_s3_client.write_buffer_to_s3(s3_directory_path=s3_path)
+      await url_writer.async_s3_client.write_buffer_to_s3(s3_directory_path=s3_path)
 
 
 if __name__ == "__main__":
