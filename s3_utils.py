@@ -10,7 +10,6 @@ from tqdm import tqdm
 class AsyncS3Client:
 
   def __init__(self, aws_region_name: str, aws_profile_name: str, buffer_length: int = 1000):
-    self.aws_region_name = aws_region_name
     self.session = aioboto3.Session(
       region_name=aws_region_name,
       profile_name=aws_profile_name
