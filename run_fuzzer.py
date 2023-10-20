@@ -40,7 +40,6 @@ class UrlWriter:
     bloom_filter_path: str,
     aws_region_name: str
   ):
-    os.environ['AWS_DEFAULT_REGION'] = aws_region_name
     async_s3_client = AsyncS3Client(aws_profile_name=aws_profile_name, aws_region_name=aws_region_name)
     
     return cls(
@@ -57,8 +56,8 @@ class UrlWriter:
     Get all urls that weren't already written to s3 or the bloom filter
     """
     processed_url_set = set(
-      await self.async_s3_client.load_files_from_s3(s3_path=s3_path))  if s3_path is not None else set()
-    print(f"Loaded {len(processed_url_set)} already processed urls from s3")
+      await self.async_s3_client.load_string_list_from_s3(s3_path=s3_path))  if s3_path is not None else set()
+    print(f"Loaded {len(processed_url_set)} already processed urls from s3_path: {s3_path}")
     return [url for url in url_list if url not in self.bloom_filter and url not in processed_url_set]
 
   async def write_url_list_to_s3(self, url_list: List[str], s3_path: str):
@@ -146,7 +145,7 @@ async def main(args):
     print(f"Processing url template: {url_template} and writing to s3_path: {s3_path}")
     full_url_list = await url_writer.get_urls_to_scan_from_fuzz_terms_file(
       url_template=url_template, path_to_fuzz_terms_file=args.path_to_fuzz_terms_file, s3_path=s3_path)
-    print(f"Loaded {len(full_url_list)} urls to process")
+    print(f"Loaded {len(full_url_list)} urls to process for url_template: {url_template}")
 
     # Split the url_list into chunks, each of which will be passed to a single proxy at a time
     chunked_url_list = []
