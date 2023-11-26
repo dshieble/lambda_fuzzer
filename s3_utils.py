@@ -1,15 +1,27 @@
 import logging
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 import uuid
 import aioboto3 
 from typing import List
 from urllib.parse import urlparse
 from tqdm import tqdm
 
+from zerophishing.utilities.constants import AWS_REGION_NAME, AWS_PROFILE_NAME
+
 class AsyncS3Client:
 
-  def __init__(self, aws_region_name: str, aws_profile_name: str, buffer_length: int = 1000):
+  def __init__(
+    self,
+    aws_region_name: str = AWS_REGION_NAME,
+    aws_profile_name: str = AWS_PROFILE_NAME,
+    buffer_length: int = 1000,
+    aws_config_file_path: Optional[str] = None,
+  ):
+    if aws_config_file_path is not None:
+      print(f"Setting AWS_CONFIG_FILE to {aws_config_file_path}")
+      os.environ['AWS_CONFIG_FILE'] = aws_config_file_path
+
     self.session = aioboto3.Session(
       region_name=aws_region_name,
       profile_name=aws_profile_name
@@ -30,19 +42,24 @@ class AsyncS3Client:
     """
     Read the contents of s3 at s3_path into a string
     """
+    raw_string = await self.load_object_from_s3(s3_path=s3_path)
+    return raw_string.decode('utf-8')
+  
+  async def load_object_from_s3(self, s3_path: str) -> str:
+    """
+    Read the raw contents of s3 at s3_path
+    """
     url_parts = urlparse(s3_path)
     s3_bucket_name = url_parts.netloc
     key = url_parts.path.lstrip('/')
 
-    async with self.session.resource('s3') as s3:
-      bucket = await s3.Bucket(s3_bucket_name)
-      obj = s3.Object(bucket, key)
-      raw_string = await (await obj.get())['Body'].read()
-      decoded_string = raw_string.decode('utf-8')
+    async with self.session.client('s3') as s3:
+      response = await s3.get_object(Bucket=s3_bucket_name, Key=key)
+      raw = await response['Body'].read()
 
-    return decoded_string
+    return raw
 
-  async def write_string_to_s3(self, string: str, s3_path: str, run_create_bucket_if_not_exists: bool = False):
+  async def write_object_to_s3(self, obj: Any, s3_path: str, run_create_bucket_if_not_exists: bool = False):
     """
     Write a single string to s3 at s3_path
     """
@@ -54,9 +71,7 @@ class AsyncS3Client:
       await self.create_bucket_if_not_exists(s3_bucket_name=s3_bucket_name)
 
     async with self.session.client('s3') as s3_client:
-      await s3_client.put_object(Body=string, Bucket=s3_bucket_name, Key=key)
-
-
+      await s3_client.put_object(Body=obj, Bucket=s3_bucket_name, Key=key)
 
 
   async def load_string_list_from_s3(self, s3_path: str) -> List[str]:
